@@ -3,7 +3,7 @@
 Notable changes to the `tyrekick` widget. The MCP server (`tyrekick-mcp`) is
 versioned separately; see [`mcp/`](mcp/).
 
-## Unreleased
+## 0.5.0
 
 - **A shared review link now unfurls as an invitation, not a bare URL.** The
   review URL gets pasted into Slack or Discord, and that paste is the ask — but
@@ -17,6 +17,12 @@ versioned separately; see [`mcp/`](mcp/).
   `tyrekick status` gained a **Link preview** row reporting what a paste will
   actually show, and flagging the missing image that separates a card from a
   line of text.
+
+## 0.4.0
+
+Published without a changelog entry at the time; written up retrospectively by
+checking the published tarball, so these are the changes that are already in
+`tyrekick@0.4.0` rather than pending ones.
 
 - **SPA route changes reset per-route pins.** Pin/draft/receipt storage is keyed
   by `location.pathname`, but `restore()` only ran once at `init()`, so on a
