@@ -108,6 +108,26 @@ comment in one — the pin appears in the other, attributed, within ~60s.
   errors, the full URL (share links can carry query secrets), or your session
   id — the `/shared` response is a deliberate projection.
 
+## Comment numbers
+
+Every reviewer sees the same number on the same comment, and that number does
+not change. The worker assigns it from the page's whole history in the order
+comments arrived, so a new comment always takes the next number and never
+disturbs one already given out.
+
+**Declining leaves a gap.** Decline #2 of five and the page shows 1, 3, 4, 5 —
+it does not slide everything up. That is deliberate: numbers get quoted. The
+widget writes one into the `Re #N:` prefix of every reply, and reviewers say
+"see #4" to each other, so a missing number is honest where a reused one
+silently changes what an old message meant.
+
+A comment you have written but not yet sent, or one whose send failed, is
+numbered above every assigned number until it arrives.
+
+Two cases fall back to counting, and numbers there can still shift: the Discord
+transport, which has nothing to read back from, and workers older than 0.6. If
+your numbers move after a decline, redeploy your worker.
+
 ## Revoke or disable
 
 Rotate or delete the worker secret — no page edit needed:

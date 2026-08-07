@@ -3,7 +3,7 @@
 Notable changes to the `tyrekick` widget. The MCP server (`tyrekick-mcp`) is
 versioned separately; see [`mcp/`](mcp/).
 
-## Unreleased
+## 0.6.0
 
 - **Comment numbers stop moving.** A pin's number was a count taken over
   whatever was on screen when the page drew, recomputed on every refresh. So
