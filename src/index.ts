@@ -36,6 +36,14 @@ export interface Pin {
   id: string;
   /** User-facing display number for top-level pins; replies derive from roots. */
   n: number;
+  /**
+   * The number the destination assigned this comment, once it has one. It is a
+   * position in the page's whole history — gaps and all — so it never changes
+   * when another comment is declined, unlike a count taken over what happens to
+   * be on screen. Null while a comment is local-only or the destination does
+   * not number (Discord, an older worker); those fall back to counting.
+   */
+  serverN: number | null;
   /** document-space coordinates (survive scroll) */
   docX: number;
   docY: number;
@@ -586,6 +594,9 @@ function restoreReceipts(): void {
       rt.pins.push({
         id: typeof d.i === "string" ? d.i : uuid(),
         n: typeof d.n === "number" ? d.n : 0,
+        // Not persisted: only unsent work is stored, and unsent work has no
+        // assigned number yet. Relearned from /shared once it is delivered.
+        serverN: null,
         docX: typeof d.x === "number" ? d.x : 0,
         docY: typeof d.y === "number" ? d.y : 0,
         clientX: 0,
@@ -670,6 +681,8 @@ function checkReceipts(): void {
  *  on the wire — an older or hand-rolled destination may send less. */
 interface SharedPin {
   id?: unknown;
+  /** Destination-assigned page number. Absent from pre-0.6 workers. */
+  n?: unknown;
   created_at?: unknown;
   body?: unknown;
   reviewer_name?: unknown;
@@ -723,7 +736,20 @@ function mergeShared(list: SharedPin[]): boolean {
 
   for (const s of list) {
     if (!s || typeof s.id !== "string") continue;
-    if (mine.has(s.id)) continue; // our own comment, already on the page
+    const serverN = typeof s.n === "number" && s.n > 0 ? s.n : null;
+    if (mine.has(s.id)) {
+      // Our own comment, already on the page — but this is the only place we
+      // ever learn the number the destination gave it. Stamping it here is what
+      // makes our numbering agree with everyone else's; skipping outright is
+      // how a reviewer ends up writing "Re #3" about a comment that is #6 to
+      // the person reading it.
+      const own = rt.pins.find((p) => !p.foreign && p.deliveredId === s.id);
+      if (own && own.serverN !== serverN) {
+        own.serverN = serverN;
+        changed = true;
+      }
+      continue;
+    }
     const status = s.status;
     // "declined" never reaches us (the worker withholds it), but an older
     // worker might send it — treat it the same way and skip.
@@ -774,6 +800,7 @@ function mergeShared(list: SharedPin[]): boolean {
       // it was answering instead of orphaning into a root.
       id: s.id,
       n: 0, // assigned by the renumber pass below
+      serverN,
       docX: (Number(anchor.x_pct) / 100) * docW,
       docY: (Number(anchor.y_pct) / 100) * docH,
       clientX: 0,
@@ -917,6 +944,7 @@ function restore(): void {
           rt.pins.push({
             id,
             n: d.n,
+            serverN: null,
             docX: d.x,
             docY: d.y,
             clientX: 0,
@@ -966,12 +994,20 @@ function legacyReplyTo(body: string, n: number): number | null {
 }
 
 function normalizeRestoredPins(pins: Pin[]): void {
+  // Mirrors renumberPins: assigned numbers win, counted ones start above them.
   let n = 0;
+  for (const p of pins) {
+    if (p.replyToId === null && p.serverN !== null && p.serverN > n) n = p.serverN;
+  }
   const roots = new Map<string, Pin>();
   for (const p of pins) {
     if (p.replyToId !== null) continue;
-    n += 1;
-    p.n = n;
+    if (p.serverN !== null) {
+      p.n = p.serverN;
+    } else {
+      n += 1;
+      p.n = n;
+    }
     roots.set(p.id, p);
   }
   for (const p of pins) {

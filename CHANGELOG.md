@@ -3,6 +3,36 @@
 Notable changes to the `tyrekick` widget. The MCP server (`tyrekick-mcp`) is
 versioned separately; see [`mcp/`](mcp/).
 
+## Unreleased
+
+- **Comment numbers stop moving.** A pin's number was a count taken over
+  whatever was on screen when the page drew, recomputed on every refresh. So
+  declining one comment shifted every later comment down by one, and switching
+  shared review on renumbered a reader's own pins the moment other people's
+  arrived. That matters more than it sounds: reviewers quote numbers to each
+  other, and the widget freezes one into the `Re #N:` prefix of every reply at
+  send time — text that reaches the worker, Discord and the MCP listing and is
+  never rewritten. Once numbering shifted, that stored text pointed at the wrong
+  comment, with nothing to signal it.
+
+  `/shared` now assigns the number and returns it as `n`, derived from the
+  page's whole history ordered by `created_at` with `id` breaking ties. It
+  counts declined records too, so removing a comment leaves a gap instead of
+  renumbering its neighbours — a gap says something was removed, where a
+  renumber silently rewrites what a quoted number means. Nothing is stored and
+  no counter is needed, so there is no atomic-increment problem: the ordering
+  comes from data already on the record.
+
+  The widget prefers the assigned number and counts only comments the
+  destination has never seen, placing those above every assigned number so the
+  two schemes cannot collide. Workers older than this release send no `n` and
+  readers fall back to counting exactly as before. Numbers are deliberately not
+  added to `/receipts`, which is contractually a non-listing capability lookup;
+  a reviewer with no review key keeps insertion-order numbering.
+
+  Redeploy your worker from `destinations/cloudflare/worker.ts` to get it — the
+  widget change alone does nothing.
+
 ## 0.5.0
 
 - **A shared review link now unfurls as an invitation, not a bare URL.** The

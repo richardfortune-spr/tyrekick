@@ -605,7 +605,8 @@ function keyMatches(presented: string, expected: string): boolean {
 /**
  * What one reviewer is allowed to learn about another reviewer's comment.
  *
- * Included: the comment, who said it, where it points, and what happened to it.
+ * Included: the comment, who said it, where it points, what happened to it, and
+ * its number on the page.
  * Withheld deliberately:
  *   - `env`        — user_agent/screen/dpr fingerprint the reviewer's machine.
  *   - `page_errors`— the prototype's stack traces are the builder's business.
@@ -614,10 +615,13 @@ function keyMatches(presented: string, expected: string): boolean {
  * `anchor.element.text` is safe by the payload contract: input/textarea/select
  * values are never captured, so it can only ever be static page text.
  */
-function sharedView(r: FeedbackRecord): Record<string, unknown> {
+function sharedView(r: FeedbackRecord, n?: number): Record<string, unknown> {
   const a = r.anchor || ({} as FeedbackRecord["anchor"]);
   return {
     id: r.id,
+    // Position in this page's whole history, gaps included. Absent only if the
+    // caller could not derive one; the widget falls back to counting.
+    n: typeof n === "number" ? n : null,
     created_at: r.created_at,
     app_version: r.app_version,
     route: r.route,
@@ -669,7 +673,9 @@ async function handleShared(request: Request, env: Env): Promise<Response> {
     return json({ ok: false, error: "storage_failed" }, 500);
   }
 
-  const filtered = keys.filter((k) => {
+  // Everything on this page, declined included. Numbering is derived from this
+  // set, the visible view from a subset of it — see the numbering note below.
+  const inScope = keys.filter((k) => {
     const m = k.metadata;
     if ((m?.p ?? "") !== project) return false;
     // Match on the PATHNAME of the stored route. Records keep the full route
@@ -677,13 +683,39 @@ async function handleShared(request: Request, env: Env): Promise<Response> {
     // differ only in query string — comparing whole routes would split a single
     // page's conversation into one silo per inbound link.
     if (route !== null && pathnameOf(m?.r ?? "") !== pathnameOf(route)) return false;
-    // "declined" is withheld from the shared view by design: declining is how
-    // an owner removes spam and noise from everyone's page, so a declined pin
-    // must stop rendering for other reviewers. Its own author still sees the
-    // outcome via /receipts, which is keyed by their own capability id.
-    if ((m?.s ?? "open") === "declined") return false;
     return true;
   });
+
+  /*
+   * Stable numbering.
+   *
+   * A comment's number is its position in the page's WHOLE history, ordered by
+   * created_at, and it is assigned here rather than counted off in the widget.
+   * The set below therefore includes declined records even though they are
+   * withheld from the response: their numbers stay spent, so removing one
+   * leaves a gap instead of shifting every later comment down by one.
+   *
+   * That gap is the point. A number is quoted — the widget freezes it into the
+   * "Re #N:" prefix of every reply, and people write "see #4" to each other —
+   * so a number that silently changes meaning is worse than a number missing
+   * from a sequence. Ordering by created_at (id breaking ties, since KV gives
+   * no ordering guarantee and equal timestamps are possible) also means a new
+   * comment always sorts last and disturbs nothing already assigned.
+   */
+  const numbers = new Map<string, number>();
+  inScope
+    .slice()
+    .sort((a, b) => {
+      const byTime = (a.metadata?.t ?? "").localeCompare(b.metadata?.t ?? "");
+      return byTime !== 0 ? byTime : a.name.localeCompare(b.name);
+    })
+    .forEach((k, index) => numbers.set(k.name, index + 1));
+
+  // "declined" is withheld from the shared view by design: declining is how an
+  // owner removes spam and noise from *everyone's* page, so a declined pin must
+  // stop rendering for other reviewers. Its own author still sees the outcome
+  // via /receipts, which is keyed by their own capability id.
+  const filtered = inScope.filter((k) => (k.metadata?.s ?? "open") !== "declined");
 
   filtered.sort((a, b) => (b.metadata?.t ?? "").localeCompare(a.metadata?.t ?? ""));
   const pageKeys = filtered.slice(0, SHARED_MAX_LIMIT);
@@ -696,10 +728,10 @@ async function handleShared(request: Request, env: Env): Promise<Response> {
   }
 
   const pins: Record<string, unknown>[] = [];
-  for (const raw of bodies) {
+  for (const [index, raw] of bodies.entries()) {
     if (raw === null) continue; // deleted between list() and get()
     try {
-      pins.push(sharedView(JSON.parse(raw) as FeedbackRecord));
+      pins.push(sharedView(JSON.parse(raw) as FeedbackRecord, numbers.get(pageKeys[index].name)));
     } catch {
       // Corrupt value: skip rather than failing the whole view.
     }

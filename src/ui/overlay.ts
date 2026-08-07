@@ -88,12 +88,23 @@ export function createOverlay(rt: Runtime): Overlay {
   }
 
   function renumberPins(): void {
+    // A number the destination assigned is authoritative and permanent. Only
+    // comments it has never seen — local-only or still in flight — are counted
+    // off here, and they start above every assigned number so the two schemes
+    // cannot collide.
     let n = 0;
+    for (const p of rt.pins) {
+      if (p.replyToId === null && p.serverN !== null && p.serverN > n) n = p.serverN;
+    }
     const roots = new Map<string, Pin>();
     for (const p of rt.pins) {
       if (p.replyToId !== null) continue;
-      n += 1;
-      p.n = n;
+      if (p.serverN !== null) {
+        p.n = p.serverN;
+      } else {
+        n += 1;
+        p.n = n;
+      }
       roots.set(p.id, p);
       syncPinEl(p);
     }
@@ -243,6 +254,7 @@ export function createOverlay(rt: Runtime): Overlay {
     const pin: Pin = {
       id: uuid(),
       n: rt.pins.filter((pp) => pp.replyToId === null).length + 1,
+      serverN: null, // nothing has seen it yet; renumberPins places it above the assigned ones
       docX,
       docY,
       clientX,
