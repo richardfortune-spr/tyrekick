@@ -253,4 +253,60 @@ describe("shared review (other reviewers' pins)", () => {
       console.error = orig;
     }
   });
+
+  /**
+   * The number a reviewer sees has to be the number the destination assigned,
+   * not a count of what happens to be on screen. People quote these numbers —
+   * the widget itself freezes one into every "Re #N:" prefix — so a number that
+   * shifts when someone else's comment is declined rewrites history silently.
+   */
+  describe("numbering follows the destination, not the on-screen count", () => {
+    const ID2 = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+
+    function markers(): string[] {
+      return Array.from(getShadow().querySelectorAll(".pin span")).map((s) => s.textContent || "?");
+    }
+
+    async function renderShared(pins: unknown[]): Promise<void> {
+      mockRoutes({ "/shared": { status: 200, body: { ok: true, pins } }, "/receipts": { status: 404 } });
+      init(SHARED);
+      await vi.waitFor(() => expect(getShadow().querySelectorAll(".pin").length).toBe(pins.length));
+    }
+
+    it("renders the number the worker assigned, not 1..n", async () => {
+      await renderShared([
+        sharedPin({ id: OTHER_ID, n: 4 }),
+        sharedPin({ id: ID2, n: 7, created_at: "2026-07-20T10:00:00.000Z" }),
+      ]);
+      expect(markers().sort()).toEqual(["4", "7"]);
+    });
+
+    it("keeps a pin's number when an earlier one is declined away", async () => {
+      // #2 has been declined, so the worker no longer sends it. The survivor is
+      // still #3 — the whole point of the gap.
+      await renderShared([sharedPin({ id: OTHER_ID, n: 1 }), sharedPin({ id: ID2, n: 3 })]);
+      expect(markers().sort()).toEqual(["1", "3"]);
+    });
+
+    it("falls back to counting when the worker sends no number (older deploy)", async () => {
+      await renderShared([
+        sharedPin({ id: OTHER_ID }),
+        sharedPin({ id: ID2, created_at: "2026-07-20T10:00:00.000Z" }),
+      ]);
+      expect(markers().sort()).toEqual(["1", "2"]);
+    });
+
+    it("places an unsent local comment above every assigned number", async () => {
+      await renderShared([sharedPin({ id: OTHER_ID, n: 9 })]);
+      const fetchMock = mockRoutes({
+        "/shared": { status: 200, body: { ok: true, pins: [sharedPin({ id: OTHER_ID, n: 9 })] } },
+        "/feedback": { status: 500 },
+        "/receipts": { status: 404 },
+      });
+      await submitFeedback({ x: 300, y: 300, body: "mine, still in flight", fetchMock });
+      // 10, not 2: a local pin must never take a number the destination owns.
+      await vi.waitFor(() => expect(markers()).toContain("10"));
+      expect(markers()).not.toContain("2");
+    });
+  });
 });

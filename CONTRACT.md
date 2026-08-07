@@ -294,11 +294,26 @@ account anywhere.
   A foreign pin's local id IS its server id, so a local reply stays attached
   across reloads. Follow-up ON a foreign pin is allowed and is the "+1, me too"
   path — replies still travel to the destination, never peer-to-peer.
-- **Numbering**: in shared mode pins are ordered by `created_at` (unsent local
-  work last) before renumbering, so every reviewer sees the same numbers.
-  Single-reviewer numbering keeps its historic insertion order untouched.
-  (This does not resolve the parked monotonic-numbering question; it makes the
-  numbers agree between browsers, not stable across deletions.)
+- **Numbering**: a comment's number is assigned by the destination, not counted
+  by the reader. `/shared` derives it from the page's whole history ordered by
+  `created_at` (`id` breaking ties) and returns it as `n`. The set it counts
+  over **includes declined records**, so a removed comment leaves a gap and
+  every surviving number stays put. Numbers are quoted — the widget freezes one
+  into each `Re #N:` prefix, and reviewers write "see #4" to each other — so a
+  gap is correct and a silent renumber is not.
+
+  The widget prefers `n` when present and counts only what the destination has
+  never seen: local-only and in-flight comments, numbered above every assigned
+  number so the two schemes cannot collide. `n` is absent on the Discord
+  transport and from workers older than 0.6, and the reader falls back to
+  counting; a page mixing the two therefore still satisfies the uniqueness
+  invariant but not stability. (This resolves the previously parked
+  monotonic-numbering question for the worker destination.)
+
+  Numbering is **not** exposed on `/receipts`. Deriving it needs a list over the
+  project, and that route is contractually a non-listing capability lookup —
+  see the receipts note above. A single reviewer with no review key therefore
+  keeps historic insertion-order numbering.
 - **Refresh posture**: silent on every failure like `/receipts`. Background
   polls (init, route change) are throttled at 60s; opening the drawer forces a
   fetch, guarded only by a single-in-flight lock — the first drawer open after

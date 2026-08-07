@@ -354,3 +354,73 @@ describe("worker rate limiting (open routes only)", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("worker GET /shared — stable numbering", () => {
+  const KEY = { "X-Tyrekick-Review-Key": "rk-secret" };
+  const URL_ALL = "https://w.test/shared?project=demo-project&route=/pricing";
+
+  /** Three comments on one page, an hour apart, oldest first. */
+  function threeInOrder(over: Array<Record<string, unknown>> = [{}, {}, {}]) {
+    return [
+      record({ id: "10000000-0000-4000-8000-000000000001", created_at: "2026-07-20T09:00:00.000Z", ...over[0] }),
+      record({ id: "10000000-0000-4000-8000-000000000002", created_at: "2026-07-20T10:00:00.000Z", ...over[1] }),
+      record({ id: "10000000-0000-4000-8000-000000000003", created_at: "2026-07-20T11:00:00.000Z", ...over[2] }),
+    ];
+  }
+
+  async function numbersById(records: Record<string, unknown>[]) {
+    const env = { FEEDBACK: fakeKV(records), TYREKICK_REVIEW_KEY: "rk-secret" } as never;
+    const res = await worker.fetch(get(URL_ALL, KEY), env, ctx as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { pins: Array<{ id: string; n: number }> };
+    return new Map(body.pins.map((p) => [p.id.slice(-1), p.n]));
+  }
+
+  it("numbers by created_at, oldest first, regardless of response order", async () => {
+    const n = await numbersById(threeInOrder());
+    expect([n.get("1"), n.get("2"), n.get("3")]).toEqual([1, 2, 3]);
+  });
+
+  it("keeps every surviving number when one is declined, leaving a gap", async () => {
+    const before = await numbersById(threeInOrder());
+    expect(before.get("3")).toBe(3);
+
+    // Decline the middle one. It leaves the view; #1 and #3 must not move.
+    const after = await numbersById(threeInOrder([{}, { status: "declined" }, {}]));
+    expect(after.has("2")).toBe(false);
+    expect(after.get("1")).toBe(1);
+    expect(after.get("3")).toBe(3); // NOT 2 — a quoted "#3" still means this one
+  });
+
+  it("keeps numbers when a comment is resolved (it stays visible and stays put)", async () => {
+    const after = await numbersById(
+      threeInOrder([{ status: "resolved", resolved_at: "2026-07-21T00:00:00.000Z" }, {}, {}]),
+    );
+    expect([after.get("1"), after.get("2"), after.get("3")]).toEqual([1, 2, 3]);
+  });
+
+  it("gives a new comment the next number without disturbing the existing ones", async () => {
+    const after = await numbersById([
+      ...threeInOrder(),
+      record({ id: "10000000-0000-4000-8000-000000000004", created_at: "2026-07-20T12:00:00.000Z" }),
+    ]);
+    expect([after.get("1"), after.get("2"), after.get("3"), after.get("4")]).toEqual([1, 2, 3, 4]);
+  });
+
+  it("does not let another page's comments consume this page's numbers", async () => {
+    const after = await numbersById([
+      ...threeInOrder(),
+      record({ id: "10000000-0000-4000-8000-000000000009", created_at: "2026-07-20T09:30:00.000Z", route: "/about" }),
+    ]);
+    expect([after.get("1"), after.get("2"), after.get("3")]).toEqual([1, 2, 3]);
+  });
+
+  it("breaks identical timestamps deterministically rather than by KV order", async () => {
+    const same = "2026-07-20T09:00:00.000Z";
+    const first = await numbersById(threeInOrder([{ created_at: same }, { created_at: same }, {}]));
+    const again = await numbersById(threeInOrder([{ created_at: same }, { created_at: same }, {}]));
+    expect(first.get("1")).toBe(again.get("1"));
+    expect(first.get("2")).toBe(again.get("2"));
+    expect(first.get("1")).not.toBe(first.get("2"));
+  });
+});
